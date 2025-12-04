@@ -1,0 +1,15 @@
+body {
+    text-align: center;
+    font-family: Arial, sans-serif;
+    background-color: #f0f0f0;
+}
+
+.video-container {
+    display: inline-block;
+    margin-top: 20px;
+}
+
+#video {
+    border: 2px solid #333;
+    border-radius: 10px;
+}

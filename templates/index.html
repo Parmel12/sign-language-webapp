@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Sign Language Web Demo</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; background:#111; color:#e6ffe6; display:flex; flex-direction:column; align-items:center; padding:20px; }
+    #video { border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.6); }
+    #status { margin-top:12px; font-size:18px; }
+    #sign { font-size:40px; margin-top:8px; color:#7fffd4; }
+    #confidence { font-size:14px; color:#bbb; }
+    #controls { margin-top:12px; }
+  </style>
+</head>
+<body>
+  <h1>Sign Language (Server-side Prediction)</h1>
+  <video id="video" autoplay playsinline width="640" height="480"></video>
+  <div id="status">Initializing camera…</div>
+  <div id="sign">Waiting...</div>
+  <div id="confidence"></div>
+  <div id="controls">
+    <label>FPS: <input id="fps" type="number" min="1" max="10" value="4" /> frames/sec</label>
+  </div>
+
+  <script>
+    const video = document.getElementById("video");
+    const status = document.getElementById("status");
+    const signEl = document.getElementById("sign");
+    const confEl = document.getElementById("confidence");
+    const fpsInput = document.getElementById("fps");
+
+    let streaming = false;
+    let lastSign = null;
+    let synth = window.speechSynthesis;
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        video.srcObject = stream;
+        await video.play();
+        streaming = true;
+        status.innerText = "Camera ready. Sending frames to server...";
+        startSendingFrames();
+      } catch (e) {
+        status.innerText = "Camera error: " + e.message;
+      }
+    }
+
+    function captureFrameToBase64() {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // Use JPEG for smaller payload
+      return canvas.toDataURL("image/jpeg", 0.7);
+    }
+
+    let sending = false;
+    async function sendFrame() {
+      if (!streaming || sending) return;
+      sending = true;
+      const imgData = captureFrameToBase64();
+      try {
+        const res = await fetch("/predict", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: imgData })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({error:"unknown"}));
+          console.warn("Predict error", err);
+          status.innerText = "Server error";
+          sending = false;
+          return;
+        }
+        const data = await res.json();
+        if (data.sign) {
+          signEl.innerText = data.sign;
+          confEl.innerText = "Confidence: " + (data.confidence ?? "N/A") + "%";
+          status.innerText = "Sign detected";
+          if (lastSign !== data.sign) {
+            lastSign = data.sign;
+            speakText(data.sign);
+          }
+        } else {
+          signEl.innerText = "No hand / uncertain";
+          confEl.innerText = data.confidence ? ("Confidence: " + data.confidence + "%") : "";
+          status.innerText = "No reliable detection";
+          lastSign = null;
+        }
+      } catch (err) {
+        console.error("Request failed", err);
+        status.innerText = "Network error";
+      } finally {
+        sending = false;
+      }
+    }
+
+    function speakText(text) {
+      if (!("speechSynthesis" in window)) return;
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "en-US";
+      u.rate = 1.0;
+      synth.cancel(); // stop queued utterances
+      synth.speak(u);
+    }
+
+    function startSendingFrames() {
+      const fps = parseFloat(fpsInput.value) || 4;
+      const interval = 1000 / fps;
+      // Use setInterval to regularly attempt sending; skip if previous not finished
+      setInterval(sendFrame, interval);
+    }
+
+    // Start camera on load
+    startCamera();
+  </script>
+</body>
+</html>
